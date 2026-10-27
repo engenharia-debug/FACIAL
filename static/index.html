@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cartão de Ponto Digital</title>
+<style>
+:root{--bg:#eef0f3;--c:#fff;--t:#16202e;--m:#667085;--p:#1f3a5f;--pt:#fff;--a:#d9730d;--b:#dde1e7;--ok:#17803d;--d:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#0e131b;--c:#171e29;--t:#e6eaf0;--m:#95a0b0;--p:#8db4ee;--pt:#0b1626;--a:#f0953a;--b:#2a3342;--ok:#4cc77a;--d:#f1786c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;background:var(--c);border-bottom:1px solid var(--b)}
+header b{font-size:17px}header span{color:var(--m);font-size:13px;margin-right:10px}
+nav{display:flex;gap:4px;padding:8px 14px;overflow-x:auto;background:var(--c);border-bottom:1px solid var(--b)}
+nav button{border:0;background:none;color:var(--m);padding:8px 14px;border-radius:8px;font:inherit;font-weight:600;white-space:nowrap;cursor:pointer}nav button.on{background:var(--p);color:var(--pt)}
+main{max-width:980px;margin:0 auto;padding:18px 14px 40px}.card{background:var(--c);border:1px solid var(--b);border-radius:12px;padding:16px;margin-bottom:16px}
+h2{margin:0 0 12px;font-size:18px}.g{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+label{display:block;font-size:13px;color:var(--m);font-weight:600}
+input,select{width:100%;margin-top:4px;padding:9px 10px;border:1px solid var(--b);border-radius:8px;background:var(--bg);color:var(--t);font:inherit}
+.bt{border:0;background:var(--p);color:var(--pt);padding:10px 16px;border-radius:8px;font:inherit;font-weight:700;cursor:pointer}.bt:disabled{opacity:.35;cursor:wait}
+.bt.sec{background:none;color:var(--p);border:1px solid var(--p)}.bt.rd{background:none;color:var(--d);border:1px solid var(--d);padding:5px 10px}
+:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+.clk{font-size:clamp(44px,12vw,76px);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.03em;line-height:1}
+.cam{position:relative;width:100%;max-width:320px;aspect-ratio:1;border-radius:14px;overflow:hidden;background:#000;margin:10px 0}
+.cam video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}.cam i{position:absolute;inset:16%;border:2px dashed var(--a);border-radius:50%}
+.sl{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}.sl div{border:2px dashed var(--b);border-radius:10px;padding:10px;text-align:center;font-size:13px;color:var(--m)}
+.sl div.f{border:2px solid var(--ok);color:var(--ok);font-weight:700}.sl strong{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}.top>*{flex:1 1 280px}.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:8px 10px;border-bottom:1px solid var(--b);text-align:left;white-space:nowrap}th{color:var(--m);font-size:13px}
+td img{width:36px;height:36px;border-radius:6px;object-fit:cover;vertical-align:middle}.tag{font-size:12px;color:var(--m)}
+.msg{max-width:80%;padding:8px 12px;border-radius:12px;margin:6px 0;background:var(--bg)}.msg.me{margin-left:auto;background:var(--p);color:var(--pt)}.msg small{display:block;opacity:.7;font-size:11px}
+.th{max-height:340px;overflow-y:auto;margin-bottom:10px}.row{display:flex;gap:8px}.row input{margin:0}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--t);color:var(--bg);padding:10px 18px;border-radius:10px;font-weight:600;z-index:9;max-width:90%}
+.lg{max-width:380px;margin:8vh auto}.lg h1{font-size:28px;margin:0 0 4px}
+@media print{.np{display:none!important}body{background:#fff;color:#000}main{padding:0}.card{border:0}}
+</style></head><body><div id="app"></div><div id="toast" hidden></div>
+<script>
+const TY=['Entrada','Saída almoço','Volta almoço','Saída'],$=s=>document.querySelector(s);
+let S={u:null,tab:'',mon:new Date().toISOString().slice(0,7),sel:'',dia:''},stream;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ft=t=>new Date(t).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),fd=t=>new Date(t).toLocaleDateString('pt-BR');
+const hm=m=>Math.floor(m/60)+'h'+String(m%60).padStart(2,'0');
+function toast(t){const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>e.hidden=true,3500)}
+async function api(p,o={}){const fm=o.body instanceof FormData;
+ const r=await fetch('/api'+p,{method:o.method,credentials:'same-origin',headers:o.body&&!fm?{'Content-Type':'application/json'}:undefined,body:o.body&&!fm?JSON.stringify(o.body):o.body});
+ if(r.status==401&&p!='/login'){if(p!='/me'){S.u=null;render()}return null}
+ const d=await r.json().catch(()=>({}));if(!r.ok){toast(d.erro||'Erro inesperado');return null}return d}
+/* câmera */
+async function cam(){stop();const v=$('#v');if(!v)return;try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:640}});v.srcObject=stream;await v.play()}catch(e){$('#cm').outerHTML='<p class="tag">Câmera indisponível. Permita o acesso à câmera no navegador.</p>'}}
+function stop(){stream&&stream.getTracks().forEach(t=>t.stop());stream=null}
+function frame(){const v=$('#v');if(!v||!v.videoWidth)return null;const c=document.createElement('canvas');c.width=480;c.height=Math.round(480*v.videoHeight/v.videoWidth);c.getContext('2d').drawImage(v,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.85)}
+async function frames(n=4){const o=[];for(let i=0;i<n;i++){const f=frame();if(!f){toast('Câmera não está pronta.');return null}o.push(f);await new Promise(r=>setTimeout(r,400))}return o}
+const CAM='<div class="cam" id="cm"><video id="v" playsinline muted></video><i></i></div>';
+async function login(){const d=await api('/login',{method:'POST',body:{mat:$('#m').value,senha:$('#s').value}});if(d){S.u=d;S.tab=d.role=='admin'?'func':'ponto';render()}}
+async function logout(){await api('/logout',{method:'POST'});S.u=null;render()}
+function render(){stop();const a=$('#app');
+ if(!S.u){a.innerHTML='<div class="lg card"><h1>Cartão de Ponto</h1><p class="tag">Entre com sua matrícula e senha.</p><label>Matrícula<input id="m" autocomplete="username"></label><br><label>Senha<input id="s" type="password" autocomplete="current-password" onkeydown="event.key==\'Enter\'&&login()"></label><br><button class="bt" style="width:100%" onclick="login()">Entrar</button></div>';return}
+ const adm=S.u.role=='admin',T=adm?[['func','Funcionários'],['reg','Registros'],['esp','Espelho de ponto'],['doc','Documentos'],['msg','Mensagens']]:[['ponto','Bater ponto'],['esp','Meu espelho'],['doc','Documentos'],['msg','Mensagens']];
+ a.innerHTML=`<header class="np"><b>Cartão de Ponto</b><div><span>${esc(S.u.nome)}</span><button class="bt sec" onclick="logout()">Sair</button></div></header><nav class="np">${T.map(t=>`<button class="${S.tab==t[0]?'on':''}" onclick="S.tab='${t[0]}';render()">${t[1]}</button>`).join('')}</nav><main id="main"></main>`;V[S.tab]()}
+let users=[];
+async function sel(v,fn,all){users=await api('/users')||[];return`<select onchange="${fn}">${all?'<option value="">Todos</option>':'<option value="">Selecione</option>'}${users.map(u=>`<option value="${u.id}" ${u.id==v?'selected':''}>${esc(u.nome)}</option>`).join('')}</select>`}
+const V={
+async ponto(){const L=(await api('/punches?dia='+new Date().toLocaleDateString('sv')))||[],tp=L.slice().reverse(),n=tp.length;
+ $('#main').innerHTML=`<div class="top"><div class="card"><div class="tag">${new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}</div><div class="clk" id="clk"></div>${CAM}<button class="bt" id="pb" ${n>3?'disabled':''} onclick="punch()">${n>3?'Jornada concluída':'Registrar '+TY[n].toLowerCase()}</button></div><div class="card"><h2>Hoje</h2><div class="sl">${TY.map((t,i)=>`<div class="${tp[i]?'f':''}">${t}<strong>${tp[i]?ft(tp[i].ts):'--:--'}</strong></div>`).join('')}</div></div></div>`;tick();cam()},
+async func(){users=await api('/users')||[];
+ $('#main').innerHTML=`<div class="top"><div class="card"><h2>Novo funcionário</h2><div class="g"><label>Nome<input id="fn"></label><label>Matrícula<input id="fm"></label><label>Senha<input id="fs" type="password"></label><label>Cargo<input id="fc"></label></div>${CAM}<p class="tag">Rosto centralizado, boa luz, sem óculos escuros. Serão tiradas 4 fotos.</p><button class="bt" onclick="addU()">Cadastrar com rosto</button></div><div class="card"><h2>Equipe</h2><div class="tw"><table><tr><th>Nome</th><th>Matrícula</th><th>Rosto</th><th></th></tr>${users.map(u=>`<tr><td>${esc(u.nome)}<div class="tag">${esc(u.cargo||'')}</div></td><td>${esc(u.mat)}</td><td>${u.face?'Cadastrado':'Pendente'}</td><td><button class="bt sec" onclick="reface(${u.id})">Novo rosto</button> <button class="bt rd" onclick="delU(${u.id})">Remover</button></td></tr>`).join('')||'<tr><td>Nenhum funcionário cadastrado.</td></tr>'}</table></div><p class="tag">&quot;Novo rosto&quot; usa a câmera ao lado, com a pessoa à frente.</p></div></div>`;cam()},
+async reg(){const s=await sel(S.sel,'S.sel=this.value;V.reg()',1),L=(await api(`/punches?uid=${S.sel}&dia=${S.dia}`))||[];
+ $('#main').innerHTML=`<div class="card"><h2>Registros de todos</h2><div class="g"><label>Funcionário${s}</label><label>Data<input type="date" value="${S.dia}" onchange="S.dia=this.value;V.reg()"></label></div><br><div class="tw"><table><tr><th>Foto</th><th>Funcionário</th><th>Data</th><th>Hora</th><th>Tipo</th><th>Similaridade</th></tr>${L.map(p=>`<tr><td>${p.foto?`<img src="${p.foto}" alt="">`:''}</td><td>${esc(p.nome)}</td><td>${fd(p.ts)}</td><td>${ft(p.ts)}</td><td>${TY[p.tipo]}</td><td>${Math.round(p.score*100)}%</td></tr>`).join('')||'<tr><td>Nenhum registro.</td></tr>'}</table></div></div>`},
+async esp(){const adm=S.u.role=='admin',s=adm?await sel(S.sel,'S.sel=this.value;V.esp()'):'',q=`uid=${adm?S.sel:''}&mon=${S.mon}`,d=(!adm||S.sel)?await api('/mirror?'+q):null;
+ $('#main').innerHTML=`<div class="card np"><h2>Espelho de ponto</h2><div class="g">${adm?`<label>Funcionário${s}</label>`:''}<label>Mês<input type="month" value="${S.mon}" onchange="S.mon=this.value;V.esp()"></label></div>${d?`<br><button class="bt" onclick="print()">Imprimir / salvar PDF</button> <a class="bt sec" style="text-decoration:none;display:inline-block" href="/api/mirror.csv?${q}">Baixar CSV</a>`:''}</div>${d?`<div class="card"><h2>Espelho de ponto · ${esc(d.user.nome)}</h2><p class="tag">Matrícula ${esc(d.user.mat)} · ${esc(d.user.cargo||'')} · Competência ${S.mon.split('-').reverse().join('/')}</p><div class="tw"><table><tr><th>Dia</th>${TY.map(t=>`<th>${t}</th>`).join('')}<th>Trabalhado</th></tr>${d.rows.map(r=>`<tr><td>${r.dia} ${r.sem}</td>${[0,1,2,3].map(i=>`<td>${r.bat[i]||'--'}</td>`).join('')}<td>${r.min?hm(r.min):'--'}</td></tr>`).join('')}<tr><th colspan="5">Total do mês</th><th>${hm(d.total)}</th></tr></table></div><br><br><p>_______________________________ &nbsp; _______________________________<br><span class="tag">Assinatura do funcionário &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Responsável</span></p></div>`:'<p class="tag">Escolha um funcionário para gerar o espelho.</p>'}`},
+async doc(){const adm=S.u.role=='admin',L=(await api('/docs'))||[];
+ $('#main').innerHTML=`${adm?'':`<div class="card"><h2>Enviar documento</h2><div class="g"><label>Tipo<select id="dt"><option>Atestado</option><option>Comprovante</option><option>Justificativa</option><option>Outro</option></select></label><label>Arquivo (PDF, PNG ou JPG)<input type="file" id="df" accept="image/*,.pdf"></label></div><br><button class="bt" onclick="upDoc()">Enviar</button></div>`}<div class="card"><h2>Documentos</h2><div class="tw"><table><tr>${adm?'<th>Funcionário</th>':''}<th>Tipo</th><th>Arquivo</th><th>Enviado</th><th></th></tr>${L.map(d=>`<tr>${adm?`<td>${esc(d.nome_func)}</td>`:''}<td>${esc(d.tipo)}</td><td>${esc(d.nome)}</td><td>${fd(d.ts)}</td><td><a class="bt sec" style="text-decoration:none" target="_blank" href="/api/docs/${d.id}/file">Abrir</a> <button class="bt rd" onclick="delDoc(${d.id})">Excluir</button></td></tr>`).join('')||'<tr><td>Nenhum documento enviado.</td></tr>'}</table></div></div>`},
+async msg(){const adm=S.u.role=='admin',s=adm?await sel(S.sel,'S.sel=this.value;V.msg()'):'',L=(!adm||S.sel)?(await api('/msgs?uid='+S.sel))||[]:null;
+ $('#main').innerHTML=`<div class="card"><h2>Mensagens</h2>${adm?`<label>Conversa com${s}</label><br>`:''}${L?`<div class="th" id="th">${L.map(m=>`<div class="msg ${(m.de=='admin')==adm?'me':''}"><small>${m.de=='admin'?'Administração':'Funcionário'} · ${fd(m.ts)} ${ft(m.ts)}</small>${esc(m.txt)}</div>`).join('')||'<p class="tag">Nenhuma mensagem ainda.</p>'}</div><div class="row"><input id="mt" placeholder="Escreva uma mensagem" onkeydown="event.key==\'Enter\'&&sendM()"><button class="bt" onclick="sendM()">Enviar</button></div>`:'<p class="tag">Escolha um funcionário para ver a conversa.</p>'}</div>`;const t=$('#th');t&&(t.scrollTop=t.scrollHeight)}};
+function tick(){const e=$('#clk');if(!e)return;e.textContent=new Date().toLocaleTimeString('pt-BR');setTimeout(tick,1000)}
+async function punch(){const b=$('#pb'),img=frame();if(!img)return toast('Câmera não está pronta.');b.disabled=true;b.textContent='Verificando rosto...';
+ const d=await api('/punch',{method:'POST',body:{image:img}});if(d)toast(`${TY[d.tipo]} registrada às ${ft(d.ts)}`);V.ponto()}
+async function addU(){const im=await frames();if(!im)return;const d=await api('/users',{method:'POST',body:{nome:$('#fn').value,mat:$('#fm').value,senha:$('#fs').value,cargo:$('#fc').value,images:im}});if(d){toast('Funcionário cadastrado.');V.func()}}
+async function reface(id){toast('Mantenha o rosto na câmera...');const im=await frames();if(im&&await api(`/users/${id}/face`,{method:'POST',body:{images:im}}))toast('Rosto atualizado.');V.func()}
+async function delU(id){if(confirm('Remover funcionário e todos os seus dados?')&&await api('/users/'+id,{method:'DELETE'}))V.func()}
+async function upDoc(){const f=$('#df').files[0];if(!f)return toast('Escolha um arquivo.');const fm=new FormData();fm.append('file',f);fm.append('tipo',$('#dt').value);if(await api('/docs',{method:'POST',body:fm})){toast('Documento enviado.');V.doc()}}
+async function delDoc(id){if(confirm('Excluir documento?')&&await api('/docs/'+id,{method:'DELETE'}))V.doc()}
+async function sendM(){const t=$('#mt').value.trim();if(t&&await api('/msgs',{method:'POST',body:{txt:t,uid:S.sel}}))V.msg()}
+(async()=>{const d=await api('/me');if(d){S.u=d;S.tab=d.role=='admin'?'func':'ponto'}render()})();
+</script></body></html>
