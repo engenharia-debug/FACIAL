@@ -1,4 +1,5 @@
 import os, io, csv, time
+from sqlalchemy import inspect, text
 from datetime import datetime, timedelta, timezone, date
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -39,6 +40,7 @@ class Punch(db.Model):
     id = db.Column(db.Integer, primary_key=True); user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
     ts = db.Column(db.DateTime, default=now, index=True); tipo = db.Column(db.Integer)
     score = db.Column(db.Float); foto = db.Column(db.Text)
+    lat = db.Column(db.Float); lng = db.Column(db.Float); acc = db.Column(db.Integer)
 class Doc(db.Model):
     id = db.Column(db.Integer, primary_key=True); user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
     tipo = db.Column(db.String(40)); nome = db.Column(db.String(200)); mime = db.Column(db.String(80))
@@ -126,11 +128,17 @@ def punch(u):
     if hoje and (now() - hoje[-1].ts).seconds < 60: return erro("Aguarde 1 minuto entre as batidas")
     embs = [np.frombuffer(f.emb, np.float32) for f in Face.query.filter_by(user_id=u.id)]
     if not embs: return erro("Rosto não cadastrado. Procure o administrador.")
-    try: img = face.decode(j().get("image", "")); emb = face.embed(img)
+    d = j()
+    try: lat, lng = float(d.get("lat")), float(d.get("lng")); assert -90 <= lat <= 90 and -180 <= lng <= 180
+    except (TypeError, ValueError, AssertionError): return erro("Localização obrigatória. Permita o acesso à localização.")
+    try: acc = max(0, int(float(d.get("acc") or 0))) or None
+    except (TypeError, ValueError): acc = None
+    try: img = face.decode(d.get("image", "")); emb = face.embed(img)
     except ValueError as m: return erro(str(m))
     sc = max(face.score(emb, x) for x in embs)
     if sc < THR: return erro(f"Rosto não reconhecido (similaridade {sc:.2f})", 403)
-    p = Punch(user_id=u.id, tipo=len(hoje), score=round(sc, 3), foto=face.thumb(img))
+    p = Punch(user_id=u.id, tipo=len(hoje), score=round(sc, 3), foto=face.thumb(img),
+                lat=round(lat, 6), lng=round(lng, 6), acc=acc)
     db.session.add(p); db.session.commit()
     return jsonify(tipo=p.tipo, ts=iso(p.ts), score=p.score)
 
@@ -143,19 +151,20 @@ def punches(u):
         s, e = day_range(date.fromisoformat(request.args["dia"])); q = q.filter(Punch.ts >= s, Punch.ts < e)
     names = {x.id: x.nome for x in User.query}
     return jsonify([dict(id=p.id, uid=p.user_id, nome=names.get(p.user_id, "?"), ts=iso(p.ts), tipo=p.tipo,
-                         score=p.score, foto=p.foto) for p in q.order_by(Punch.ts.desc()).limit(300)])
+                         score=p.score, foto=p.foto, lat=p.lat, lng=p.lng, acc=p.acc) for p in q.order_by(Punch.ts.desc()).limit(300)])
 
 def mirror(uid, mon):
     y, m = map(int, mon.split("-")); a = date(y, m, 1); b = date(y + (m == 12), m % 12 + 1, 1)
     s, e = day_range(a)[0], day_range(b)[0]; by = {}
     for p in Punch.query.filter(Punch.user_id == uid, Punch.ts >= s, Punch.ts < e).order_by(Punch.ts):
-        by.setdefault(loc(p.ts).date(), []).append(loc(p.ts))
+        by.setdefault(loc(p.ts).date(), []).append(p)
     rows, tot = [], 0
     for n in range((b - a).days):
-        d = a + timedelta(days=n); t = by.get(d, []); w = 0
+        d = a + timedelta(days=n); ps = by.get(d, []); t = [loc(p.ts) for p in ps]; w = 0
         if len(t) > 1: w += int((t[1] - t[0]).total_seconds() // 60)
         if len(t) > 3: w += int((t[3] - t[2]).total_seconds() // 60)
-        rows.append(dict(dia=d.strftime("%d/%m"), sem=SEM[d.weekday()], bat=[x.strftime("%H:%M") for x in t], min=w)); tot += w
+        rows.append(dict(dia=d.strftime("%d/%m"), sem=SEM[d.weekday()], bat=[x.strftime("%H:%M") for x in t], min=w,
+                         loc=[dict(lat=p.lat, lng=p.lng, acc=p.acc) if p.lat is not None else None for p in ps])); tot += w
     return rows, tot
 @app.get("/api/mirror")
 @need()
@@ -166,9 +175,10 @@ def mirror_api(u):
 @need()
 def mirror_csv(u):
     uid = target(u); x = db.get_or_404(User, uid); rows, tot = mirror(uid, request.args["mon"])
-    o = io.StringIO(); w = csv.writer(o, delimiter=";"); w.writerow(["Dia", "Semana", "Entrada", "Saída almoço", "Volta almoço", "Saída", "Minutos"])
-    for r in rows: w.writerow([r["dia"], r["sem"]] + (r["bat"] + [""] * 4)[:4] + [r["min"]])
-    w.writerow(["Total", "", "", "", "", "", tot])
+    o = io.StringIO(); w = csv.writer(o, delimiter=";"); w.writerow(["Dia", "Semana", "Entrada", "Saída almoço", "Volta almoço", "Saída", "Minutos", "Local entrada", "Local saída almoço", "Local volta almoço", "Local saída"])
+    fl = lambda l: f"{l['lat']},{l['lng']}" if l else ""
+    for r in rows: w.writerow([r["dia"], r["sem"]] + (r["bat"] + [""] * 4)[:4] + [r["min"]] + [fl(l) for l in (r["loc"] + [None] * 4)[:4]])
+    w.writerow(["Total", "", "", "", "", "", tot, "", "", "", ""])
     return send_file(io.BytesIO(("\ufeff" + o.getvalue()).encode()), mimetype="text/csv", as_attachment=True,
                      download_name=f"espelho_{x.mat}_{request.args['mon']}.csv")
 
@@ -218,6 +228,10 @@ def index(): return send_from_directory("static", "index.html")
 
 with app.app_context():
     db.create_all()
+    cols = {c["name"] for c in inspect(db.engine).get_columns("punch")}  # create_all não altera tabelas existentes
+    for n, t in (("lat", "FLOAT"), ("lng", "FLOAT"), ("acc", "INTEGER")):
+        if n not in cols: db.session.execute(text(f"ALTER TABLE punch ADD COLUMN {n} {t}"))
+    db.session.commit()
     if not User.query.filter_by(role="admin").first():
         db.session.add(User(nome="Administrador", mat=os.getenv("ADMIN_MAT", "admin"), role="admin",
                             senha=generate_password_hash(os.getenv("ADMIN_PASSWORD", "admin123"))))
