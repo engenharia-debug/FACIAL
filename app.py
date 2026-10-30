@@ -222,9 +222,13 @@ def msgs(u):
 def send_msg(u):
     d = j(); txt = str(d.get("txt", "")).strip()[:2000]; uid = int(d.get("uid") or 0) if u.role == "admin" else u.id
     if not txt or not uid: return erro("Mensagem vazia")
-    db.session.add(Msg(user_id=uid, de=u.role == "admin" and "admin" or "func", txt=txt)); db.session.commit()
+    db.session.add(Msg(user_id=uid, de="admin" if u.role == "admin" else "func", txt=txt)); db.session.commit()
     return jsonify(ok=1)
 
+@app.after_request
+def nocache(r):  # evita respostas e página antigas em cache (principalmente no celular)
+    if request.path.startswith("/api/") or request.path == "/": r.headers["Cache-Control"] = "no-store"
+    return r
 @app.get("/health")
 def health(): return "ok"
 @app.get("/")
