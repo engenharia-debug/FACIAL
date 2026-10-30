@@ -105,7 +105,7 @@ const LK=o=>{if(!o||o.lat==null||o.lng==null)return'';const a=o.acc,q=!a||a<=30?
 const loc=()=>new Promise(r=>{if(!navigator.geolocation)return r({erro:'Seu navegador não suporta localização.'});navigator.geolocation.getCurrentPosition(p=>r({lat:+p.coords.latitude.toFixed(6),lng:+p.coords.longitude.toFixed(6),acc:Math.round(p.coords.accuracy)}),e=>r({erro:e.code==1?'Permita o acesso à localização para bater o ponto.':'Não foi possível obter a localização. Tente novamente.'}),{enableHighAccuracy:true,timeout:15000,maximumAge:0})});
 function toast(t,x){const e=$('#toast');e.textContent=t;e.style.background=x?'#b3261e':'';e.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>e.hidden=true,3500)}
 async function api(p,o={}){const fm=o.body instanceof FormData;
- const r=await fetch('/api'+p,{method:o.method,credentials:'same-origin',headers:o.body&&!fm?{'Content-Type':'application/json'}:undefined,body:o.body&&!fm?JSON.stringify(o.body):o.body});
+ const r=await fetch('/api'+p,{method:o.method,cache:'no-store',credentials:'same-origin',headers:o.body&&!fm?{'Content-Type':'application/json'}:undefined,body:o.body&&!fm?JSON.stringify(o.body):o.body});
  if(r.status==401&&p!='/login'){if(p!='/me'){S.u=null;render()}return null}
  const d=await r.json().catch(()=>({}));if(!r.ok){toast(d.erro||'Erro inesperado',1);return null}return d}
 /* câmera */
@@ -137,7 +137,7 @@ async doc(){const adm=S.u.role=='admin',L=(await api('/docs'))||[];
  $('#main').innerHTML=`${adm?'':`<div class="card"><h2>Enviar documento</h2><div class="g"><label>Tipo<select id="dt"><option>Atestado</option><option>Comprovante</option><option>Justificativa</option><option>Outro</option></select></label><label>Arquivo (PDF, PNG ou JPG)<input type="file" id="df" accept="image/*,.pdf"></label></div><br><button class="bt" onclick="upDoc()">Enviar</button></div>`}<div class="card"><h2>Documentos</h2><div class="tw"><table><tr>${adm?'<th>Funcionário</th>':''}<th>Tipo</th><th>Arquivo</th><th>Enviado</th><th></th></tr>${L.map(d=>`<tr>${adm?`<td>${esc(d.nome_func)}</td>`:''}<td>${esc(d.tipo)}</td><td>${esc(d.nome)}</td><td>${fd(d.ts)}</td><td><a class="bt sec" style="text-decoration:none" target="_blank" href="/api/docs/${d.id}/file">Abrir</a> <button class="bt rd" onclick="delDoc(${d.id})">Excluir</button></td></tr>`).join('')||'<tr><td>Nenhum documento enviado.</td></tr>'}</table></div></div>`},
 async msg(){clearInterval(S.pm);const adm=S.u.role=='admin',s=adm?await sel(S.sel,'S.sel=this.value;V.msg()'):'',L=(!adm||S.sel)?(await api('/msgs?uid='+S.sel))||[]:null;
  $('#main').innerHTML=`<div class="card"><h2>Mensagens</h2>${adm?`<label>Conversa com${s}</label><br>`:''}${L?`<div class="th" id="th" data-n="${L.length}">${thr(L,adm)}</div><div class="row"><input id="mt" placeholder="Escreva uma mensagem" onkeydown="event.key=='Enter'&&sendM()"><button class="bt" onclick="sendM()">Enviar</button></div>`:'<p class="tag">Escolha um funcionário para ver a conversa.</p>'}</div>`;const t=$('#th');if(t){t.scrollTop=t.scrollHeight;S.pm=setInterval(refM,3000)}}};
-const thr=(L,adm)=>L.map(m=>`<div class="msg ${(m.de=='admin')==adm?'me':''}"><small>${m.de=='admin'?'Administração':'Funcionário'} · ${fd(m.ts)} ${ft(m.ts)}</small>${esc(m.txt)}</div>`).join('')||'<p class="tag">Nenhuma mensagem ainda.</p>';
+const thr=(L,adm)=>L.map(m=>`<div class="msg ${m.de==(adm?'admin':'func')?'me':''}"><small>${m.de=='admin'?'Administração':'Funcionário'} · ${fd(m.ts)} ${ft(m.ts)}</small>${esc(m.txt)}</div>`).join('')||'<p class="tag">Nenhuma mensagem ainda.</p>';
 async function refM(f){const t=$('#th');if(!t||document.hidden&&!f)return;const adm=S.u.role=='admin',L=await api('/msgs?uid='+S.sel);if(!L||!$('#th'))return;if(f||t.dataset.n!=L.length){t.dataset.n=L.length;t.innerHTML=thr(L,adm);t.scrollTop=t.scrollHeight}}
 function tick(){const e=$('#clk');if(!e)return;e.textContent=new Date().toLocaleTimeString('pt-BR');setTimeout(tick,1000)}
 async function punch(){const b=$('#pb'),t0=b.textContent,undo=()=>{b.disabled=false;b.textContent=t0};b.disabled=true;b.textContent='Obtendo localização...';
@@ -156,6 +156,8 @@ async function reface(id){const b=$('#sv');b.disabled=true;const im=await frames
 async function delU(id){if(confirm('Remover funcionário e todos os seus dados?')&&await api('/users/'+id,{method:'DELETE'}))V.func()}
 async function upDoc(){const f=$('#df').files[0];if(!f)return toast('Escolha um arquivo.');const fm=new FormData();fm.append('file',f);fm.append('tipo',$('#dt').value);if(await api('/docs',{method:'POST',body:fm})){toast('Documento enviado.');V.doc()}}
 async function delDoc(id){if(confirm('Excluir documento?')&&await api('/docs/'+id,{method:'DELETE'}))V.doc()}
-async function sendM(){const i=$('#mt'),t=i.value.trim();if(!t)return;i.value='';if(await api('/msgs',{method:'POST',body:{txt:t,uid:S.sel}}))refM(1);else i.value=t}
+async function sendM(){const i=$('#mt'),t=i.value.trim();if(!t)return;i.value='';const h=$('#th'),adm=S.u.role=='admin';
+ if(h){h.insertAdjacentHTML('beforeend',`<div class="msg me"><small>${adm?'Administração':'Funcionário'} · enviando…</small>${esc(t)}</div>`);h.scrollTop=h.scrollHeight}
+ if(!await api('/msgs',{method:'POST',body:{txt:t,uid:S.sel}}))i.value=t;refM(1)}
 (async()=>{const d=await api('/me');if(d){S.u=d;S.tab=d.role=='admin'?'func':'ponto'}render()})();
 </script></body></html>
