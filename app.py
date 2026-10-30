@@ -1,10 +1,11 @@
 import os, io, csv, time
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta, timezone, date
 from functools import wraps
 from zoneinfo import ZoneInfo
 import numpy as np
-from flask import Flask, jsonify, request, session, send_file, send_from_directory
+from flask import Flask, jsonify, request, session, send_file, send_from_directory, redirect
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import face
@@ -18,6 +19,7 @@ app.config.update(
 db = SQLAlchemy(app)
 TZ = ZoneInfo(os.getenv("TZ_NAME", "America/Sao_Paulo"))
 THR = float(os.getenv("FACE_THRESHOLD", "0.45"))
+RELAT_INICIO = int(os.getenv("RELAT_INICIO", "1"))  # primeiro nº de relatório a emitir (ou piso da numeração)
 SEM = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 
 def now(): return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -48,6 +50,12 @@ class Doc(db.Model):
 class Msg(db.Model):
     id = db.Column(db.Integer, primary_key=True); user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
     de = db.Column(db.String(10)); autor_id = db.Column(db.Integer); txt = db.Column(db.Text); ts = db.Column(db.DateTime, default=now)
+
+class Relatorio(db.Model):  # Relatório de Serviço Externo (emissão de documentos). Sem FK: o histórico fica mesmo se o usuário for removido.
+    id = db.Column(db.Integer, primary_key=True); nro = db.Column(db.Integer, unique=True, nullable=False)
+    user_id = db.Column(db.Integer, index=True); autor = db.Column(db.String(120))
+    proc = db.Column(db.String(80)); cliente = db.Column(db.String(200)); obra = db.Column(db.String(200))
+    arquivo = db.Column(db.String(400)); criado = db.Column(db.DateTime, default=now); salvo = db.Column(db.DateTime)
 
 def j(): return request.get_json(silent=True) or {}
 def erro(m, c=400): return jsonify(erro=m), c
@@ -233,9 +241,45 @@ def send_msg(u):
     db.session.add(Msg(user_id=uid, de="admin" if u.role == "admin" else "func", autor_id=u.id, txt=txt)); db.session.commit()
     return jsonify(ok=1)
 
+fnro = lambda n: f"{n:06d}"
+@app.post("/api/relatorios/novo")
+@need()
+def relat_novo(u):  # reserva o próximo número (único, mesmo com vários usuários ao mesmo tempo)
+    for _ in range(5):
+        ult = db.session.query(db.func.max(Relatorio.nro)).scalar()
+        n = max(RELAT_INICIO, (ult if ult is not None else RELAT_INICIO - 1) + 1)
+        db.session.add(Relatorio(nro=n, user_id=u.id, autor=u.nome))
+        try: db.session.commit(); return jsonify(nro=fnro(n))
+        except IntegrityError: db.session.rollback()
+    return erro("Não foi possível gerar o número. Tente novamente.", 409)
+@app.post("/api/relatorios/salvar")
+@need()
+def relat_salvar(u):  # chamado depois que o PDF/HTML foi para o Drive
+    d = j()
+    try: n = int(str(d.get("nro", "")).strip()); assert n >= 0
+    except (ValueError, AssertionError): return erro("Número do relatório inválido")
+    r = Relatorio.query.filter_by(nro=n).first()
+    if r and r.user_id != u.id and u.role != "admin": return erro("Este número pertence a outro usuário. Clique em Novo relatório.", 403)
+    if not r: r = Relatorio(nro=n, user_id=u.id, autor=u.nome); db.session.add(r)  # rascunho criado antes desta atualização
+    for k, m in (("proc", 80), ("cliente", 200), ("obra", 200), ("arquivo", 400)): setattr(r, k, str(d.get(k, "")).strip()[:m])
+    r.salvo = now()
+    try: db.session.commit()
+    except IntegrityError: db.session.rollback(); return erro("Número já registrado. Clique em Novo relatório.", 409)
+    return jsonify(ok=1, nro=fnro(n))
+@app.get("/api/relatorios")
+@need()
+def relat_lista(u):
+    q = Relatorio.query if u.role == "admin" else Relatorio.query.filter_by(user_id=u.id)
+    return jsonify([dict(nro=fnro(r.nro), autor=r.autor, proc=r.proc, cliente=r.cliente, obra=r.obra, arquivo=r.arquivo,
+                         criado=iso(r.criado), salvo=iso(r.salvo) if r.salvo else None) for r in q.order_by(Relatorio.nro.desc()).limit(500)])
+@app.get("/relat")
+def relat_page():  # fora da pasta static: só abre com login (a página traz a URL e o token do Drive)
+    if not (session.get("uid") and db.session.get(User, session["uid"])): return redirect("/")
+    return send_from_directory("private", "relat.html")
+
 @app.after_request
 def nocache(r):  # evita respostas e página antigas em cache (principalmente no celular)
-    if request.path.startswith("/api/") or request.path == "/": r.headers["Cache-Control"] = "no-store"
+    if request.path.startswith("/api/") or request.path in ("/", "/relat"): r.headers["Cache-Control"] = "no-store"
     return r
 @app.get("/health")
 def health(): return "ok"

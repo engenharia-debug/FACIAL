@@ -3,6 +3,7 @@
 Sistema web de ponto com reconhecimento facial. Flask + PostgreSQL + OpenCV (YuNet detecta, SFace reconhece).
 
 **Admin:** cadastra funcionários com rosto, vê todos os registros, gera espelho de ponto (imprimir/PDF e CSV), vê documentos e responde mensagens.
+**Emissão de documentos (admin e técnico):** aba que abre o Relatório de Serviço Externo VEPAN (`private/relat.html`). O número do relatório vem do banco (tabela `relatorio`) e, ao salvar no Drive, o relatório é registrado no banco.
 **Funcionário:** bate as 4 batidas (entrada, saída almoço, volta almoço, saída) com validação facial, envia documentos e mensagens.
 
 ## Publicar no Render
@@ -27,6 +28,7 @@ python app.py   # http://localhost:5000, admin / admin123
 | `SECRET_KEY` | assina a sessão (gerada pelo Render) |
 | `ADMIN_MAT` / `ADMIN_PASSWORD` | admin criado no primeiro start |
 | `TZ_NAME` | fuso para dias e espelho (padrão America/Sao_Paulo) |
+| `RELAT_INICIO` | primeiro nº de relatório a emitir / piso da numeração (padrão 1) |
 | `FACE_THRESHOLD` | similaridade mínima (0.45 padrão; suba para 0.5+ para ser mais rígido) |
 
 ## Reconhecimento facial
