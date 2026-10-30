@@ -158,13 +158,17 @@ def mirror(uid, mon):
     s, e = day_range(a)[0], day_range(b)[0]; by = {}
     for p in Punch.query.filter(Punch.user_id == uid, Punch.ts >= s, Punch.ts < e).order_by(Punch.ts):
         by.setdefault(loc(p.ts).date(), []).append(p)
+    dd = {}
+    for di, dt, dn, dts in Doc.query.with_entities(Doc.id, Doc.tipo, Doc.nome, Doc.ts).filter(Doc.user_id == uid, Doc.ts >= s, Doc.ts < e).order_by(Doc.ts):
+        dd.setdefault(loc(dts).date(), []).append(dict(id=di, tipo=dt, nome=dn))
     rows, tot = [], 0
     for n in range((b - a).days):
         d = a + timedelta(days=n); ps = by.get(d, []); t = [loc(p.ts) for p in ps]; w = 0
         if len(t) > 1: w += int((t[1] - t[0]).total_seconds() // 60)
         if len(t) > 3: w += int((t[3] - t[2]).total_seconds() // 60)
         rows.append(dict(dia=d.strftime("%d/%m"), sem=SEM[d.weekday()], bat=[x.strftime("%H:%M") for x in t], min=w,
-                         loc=[dict(lat=p.lat, lng=p.lng, acc=p.acc) if p.lat is not None else None for p in ps])); tot += w
+                         loc=[dict(lat=p.lat, lng=p.lng, acc=p.acc) if p.lat is not None else None for p in ps],
+                         docs=dd.get(d, []))); tot += w
     return rows, tot
 @app.get("/api/mirror")
 @need()
