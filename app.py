@@ -47,7 +47,7 @@ class Doc(db.Model):
     dados = db.Column(db.LargeBinary); ts = db.Column(db.DateTime, default=now)
 class Msg(db.Model):
     id = db.Column(db.Integer, primary_key=True); user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
-    de = db.Column(db.String(10)); txt = db.Column(db.Text); ts = db.Column(db.DateTime, default=now)
+    de = db.Column(db.String(10)); autor_id = db.Column(db.Integer); txt = db.Column(db.Text); ts = db.Column(db.DateTime, default=now)
 
 def j(): return request.get_json(silent=True) or {}
 def erro(m, c=400): return jsonify(erro=m), c
@@ -61,7 +61,7 @@ def need(role=None):
             return f(u, *a, **k)
         return w
     return deco
-def target(u):  # admin escolhe o funcionário; funcionário só vê o próprio
+def target(u):  # admin escolhe o técnico; técnico só vê o próprio
     return int(request.args.get("uid") or 0) if u.role == "admin" else u.id
 
 fails = {}
@@ -91,16 +91,20 @@ def enroll(u, imgs):
 
 @app.get("/api/users")
 @need("admin")
-def users(u): return jsonify([x.dto() for x in User.query.filter_by(role="func").order_by(User.nome)])
+def users(u):
+    q = User.query if request.args.get("all") else User.query.filter_by(role="func")
+    return jsonify([x.dto() for x in q.order_by(User.role, User.nome)])
 @app.post("/api/users")
 @need("admin")
 def new_user(u):
     d = j(); nome, mat, senha = (str(d.get(k, "")).strip() for k in ("nome", "mat", "senha"))
     if not (nome and mat and len(senha) >= 4): return erro("Preencha nome, matrícula e senha (mín. 4)")
     if User.query.filter_by(mat=mat).first(): return erro("Matrícula já cadastrada")
-    x = User(nome=nome, mat=mat, senha=generate_password_hash(senha), cargo=str(d.get("cargo", ""))[:80])
+    role = "admin" if d.get("role") == "admin" else "func"
+    x = User(nome=nome, mat=mat, senha=generate_password_hash(senha), cargo=str(d.get("cargo", ""))[:80], role=role)
     try:
-        db.session.add(x); db.session.flush(); enroll(x, d.get("images", []))
+        db.session.add(x); db.session.flush()
+        if role == "func": enroll(x, d.get("images", []))  # administrador não bate ponto, não precisa de rosto
     except ValueError as m: db.session.rollback(); return erro(str(m))
     db.session.commit(); return jsonify(x.dto())
 @app.post("/api/users/<int:i>/face")
@@ -114,14 +118,14 @@ def reface(u, i):
 @need("admin")
 def del_user(u, i):
     x = db.get_or_404(User, i)
-    if x.role == "admin": return erro("Não é possível remover o admin")
+    if x.id == u.id: return erro("Você não pode remover o seu próprio acesso")
     for M in (Face, Punch, Doc, Msg): M.query.filter_by(user_id=i).delete()
     db.session.delete(x); db.session.commit(); return jsonify(ok=1)
 
 @app.post("/api/punch")
 @need()
 def punch(u):
-    if u.role != "func": return erro("Apenas funcionários batem ponto")
+    if u.role != "func": return erro("Apenas técnicos batem ponto")
     s, e = day_range(loc(now()).date())
     hoje = Punch.query.filter(Punch.user_id == u.id, Punch.ts >= s, Punch.ts < e).order_by(Punch.ts).all()
     if len(hoje) >= 4: return erro("Jornada de hoje já concluída")
@@ -216,13 +220,17 @@ def del_doc(u, i):
 @app.get("/api/msgs")
 @need()
 def msgs(u):
-    return jsonify([dict(de=m.de, txt=m.txt, ts=iso(m.ts)) for m in Msg.query.filter_by(user_id=target(u)).order_by(Msg.ts)])
+    uid = target(u); names = {x.id: x.nome for x in User.query}; out = []
+    for m in Msg.query.filter_by(user_id=uid).order_by(Msg.ts):
+        nome = names.get(m.autor_id) or (names.get(uid, "Técnico") if m.de == "func" else "Administração")
+        out.append(dict(de=m.de, txt=m.txt, ts=iso(m.ts), autor=nome, eu=(m.autor_id == u.id) if m.autor_id else (m.de == u.role)))
+    return jsonify(out)
 @app.post("/api/msgs")
 @need()
 def send_msg(u):
     d = j(); txt = str(d.get("txt", "")).strip()[:2000]; uid = int(d.get("uid") or 0) if u.role == "admin" else u.id
     if not txt or not uid: return erro("Mensagem vazia")
-    db.session.add(Msg(user_id=uid, de="admin" if u.role == "admin" else "func", txt=txt)); db.session.commit()
+    db.session.add(Msg(user_id=uid, de="admin" if u.role == "admin" else "func", autor_id=u.id, txt=txt)); db.session.commit()
     return jsonify(ok=1)
 
 @app.after_request
@@ -236,9 +244,11 @@ def index(): return send_from_directory("static", "index.html")
 
 with app.app_context():
     db.create_all()
-    cols = {c["name"] for c in inspect(db.engine).get_columns("punch")}  # create_all não altera tabelas existentes
-    for n, t in (("lat", "FLOAT"), ("lng", "FLOAT"), ("acc", "INTEGER")):
-        if n not in cols: db.session.execute(text(f"ALTER TABLE punch ADD COLUMN {n} {t}"))
+    insp = inspect(db.engine)  # create_all não altera tabelas existentes
+    for tb, novas in (("punch", (("lat", "FLOAT"), ("lng", "FLOAT"), ("acc", "INTEGER"))), ("msg", (("autor_id", "INTEGER"),))):
+        have = {c["name"] for c in insp.get_columns(tb)}
+        for n, t in novas:
+            if n not in have: db.session.execute(text(f"ALTER TABLE {tb} ADD COLUMN {n} {t}"))
     db.session.commit()
     if not User.query.filter_by(role="admin").first():
         db.session.add(User(nome="Administrador", mat=os.getenv("ADMIN_MAT", "admin"), role="admin",
